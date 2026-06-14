@@ -1,0 +1,6 @@
+Role    Username    Password    
+Super Admin superadmin  admin@123   
+Admin   chennai_admin   chennai@123
+Admin   delhi_admin delhi@123       
+Admin   blr_admin   blr@123
+Admin   mum_admin   mum@12
