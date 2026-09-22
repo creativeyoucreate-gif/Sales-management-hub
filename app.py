@@ -6,13 +6,12 @@
 import streamlit as st
 import pandas as pd
 from datetime import date
-from db_connection import run_query
 from crud_operations import (
     login_user, get_all_branches, add_sale, get_all_sales,
     get_sales_by_branch, get_pending_sales, add_payment,
     get_payments_for_sale, get_all_payments, get_kpi_summary,
     get_branch_wise_sales, get_payment_method_summary,
-    get_monthly_sales_trend
+    get_monthly_sales_trend, delete_sale, delete_payment
 )
 
 st.set_page_config(page_title="Sales Intelligence Hub", page_icon="📊", layout="wide")
@@ -25,7 +24,11 @@ if "user" not in st.session_state:
 
 # ── Helpers ──────────────────────────────────────────────────
 def to_df(rows):
-    return pd.DataFrame(rows) if rows else pd.DataFrame()
+    """Turn a list of database rows into a pandas table for display."""
+    if rows:
+        return pd.DataFrame(rows)
+    else:
+        return pd.DataFrame()
 
 def page_title(text):
     st.markdown(f"<h1 style='text-align:center'>{text}</h1>", unsafe_allow_html=True)
@@ -62,14 +65,18 @@ def show_login():
 def page_dashboard(role, branch_id):
     st.title("📊 Sales Intelligence Hub — Dashboard")
 
-    kpi = get_kpi_summary(branch_id if role == "Admin" else None)
-    if kpi and kpi[0]:
+    if role == "Admin":
+        kpi = get_kpi_summary(branch_id)
+    else:
+        kpi = get_kpi_summary()
+
+    if kpi:
         k = kpi[0]
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("📦 Total Sales",     k["total_sales"] or 0)
-        c2.metric("💰 Gross Sales (₹)", f"₹{k['total_gross']    or 0:,.2f}")
-        c3.metric("✅ Received (₹)",     f"₹{k['total_received'] or 0:,.2f}")
-        c4.metric("⏳ Pending (₹)",      f"₹{k['total_pending']  or 0:,.2f}")
+        c1.metric("📦 Total Sales",     k.get("total_sales", 0))
+        c2.metric("💰 Gross Sales (₹)", f"₹{k.get('total_gross', 0):,.2f}")
+        c3.metric("✅ Received (₹)",     f"₹{k.get('total_received', 0):,.2f}")
+        c4.metric("⏳ Pending (₹)",      f"₹{k.get('total_pending', 0):,.2f}")
 
     st.divider()
     col_a, col_b = st.columns(2)
@@ -81,222 +88,172 @@ def page_dashboard(role, branch_id):
             df = to_df(bws)
             df["total_gross_sales"] = pd.to_numeric(df["total_gross_sales"], errors="coerce")
             st.bar_chart(df.set_index("branch_name")["total_gross_sales"])
+        else:
+            st.info("No sales yet.")
 
     with col_b:
         st.subheader("💳 Payment Method Breakdown")
         pm = get_payment_method_summary()
         if pm:
             st.dataframe(to_df(pm), use_container_width=True)
+        else:
+            st.info("No payments yet.")
 
 
 def page_add_sale(role, branch_id):
-    page_title("➕ Add New Sale")
+    st.title("➕ Add Sale")
 
+    # Build a simple list of branch names for the dropdown
     branches = get_all_branches()
-    if not branches:
-        st.warning("No branches found.")
-        return
+    branch_names = []
+    branch_name_to_id = {}
+    for b in branches:
+        branch_names.append(b["branch_name"])
+        branch_name_to_id[b["branch_name"]] = b["branch_id"]
 
-    if role == "Admin":
-        branch_options = {b["branch_name"]: b["branch_id"] for b in branches if b["branch_id"] == branch_id}
+    if role == "Super Admin":
+        chosen_branch_name = st.selectbox("Branch", branch_names)
+        chosen_branch_id = branch_name_to_id[chosen_branch_name]
     else:
-        branch_options = {b["branch_name"]: b["branch_id"] for b in branches}
+        # Admins can only add sales for their own branch
+        chosen_branch_id = branch_id
+        st.write("Branch: your assigned branch")
 
-    with center_col():
-        with st.form("add_sale_form"):
-            selected_branch = st.selectbox("Branch", list(branch_options.keys()))
-            sale_date       = st.date_input("Sale Date", value=date.today())
-            customer_name   = st.text_input("Customer Name")
-            mobile          = st.text_input("Mobile Number (10 digits)")
-            product         = st.selectbox("Product", ["DS", "DA", "BA", "FSD"])
-            gross           = st.number_input("Gross Sales Amount (₹)", min_value=0.0, step=500.0)
-            submit          = st.form_submit_button("✅ Add Sale", use_container_width=True)
+    with st.form("add_sale_form"):
+        sale_date = st.date_input("Date", value=date.today())
+        name = st.text_input("Customer Name")
+        mobile_number = st.text_input("Mobile Number")
+        product_name = st.text_input("Product Name")
+        gross_sales = st.number_input("Gross Sales (₹)", min_value=0.0, step=100.0)
+        submitted = st.form_submit_button("Add Sale")
 
-        if submit:
-            if not customer_name or not mobile:
-                st.error("Please fill in all fields.")
-            else:
-                result = add_sale(branch_options[selected_branch], sale_date, customer_name, mobile, product, gross)
-                if result:
-                    st.success(f"✅ Sale added! Sale ID: {result}")
-                else:
-                    st.error("❌ Failed. Mobile number may already exist.")
+    if submitted:
+        if name and mobile_number and product_name and gross_sales > 0:
+            add_sale(chosen_branch_id, sale_date, name, mobile_number, product_name, gross_sales)
+            st.success("Sale added successfully!")
+        else:
+            st.error("Please fill in all fields.")
 
 
 def page_add_payment(role, branch_id):
-    page_title("💳 Add Payment for a Sale")
+    st.title("💳 Add Payment")
 
-    sales = get_sales_by_branch(branch_id) if role == "Admin" else get_all_sales()
+    if role == "Super Admin":
+        sales = get_all_sales()
+    else:
+        sales = get_sales_by_branch(branch_id)
+
     if not sales:
-        st.warning("No sales records found.")
+        st.info("No sales found yet.")
         return
 
-    sale_options = {f"#{s['sale_id']} — {s['name']} (₹{s['pending_amount']})": s["sale_id"]
-                    for s in sales if float(s["pending_amount"]) > 0}
-    if not sale_options:
-        st.success("🎉 All sales are fully paid!")
-        return
+    # Build a simple list of sale choices for the dropdown
+    sale_labels = []
+    label_to_sale_id = {}
+    for s in sales:
+        label = f"Sale #{s['sale_id']} - {s['name']} (Pending: ₹{s['pending_amount']})"
+        sale_labels.append(label)
+        label_to_sale_id[label] = s["sale_id"]
 
-    with center_col():
-        st.info("💡 Database trigger auto-updates received & pending amounts after payment.")
+    chosen_label = st.selectbox("Select Sale", sale_labels)
+    chosen_sale_id = label_to_sale_id[chosen_label]
 
-        with st.form("add_payment_form"):
-            selected_sale = st.selectbox("Select Sale", list(sale_options.keys()))
-            payment_date  = st.date_input("Payment Date", value=date.today())
-            amount        = st.number_input("Amount Paid (₹)", min_value=0.0, step=100.0)
-            method        = st.selectbox("Payment Method", ["Cash", "UPI", "Card"])
-            submit        = st.form_submit_button("✅ Record Payment", use_container_width=True)
+    with st.form("add_payment_form"):
+        payment_date = st.date_input("Payment Date", value=date.today())
+        amount_paid = st.number_input("Amount Paid (₹)", min_value=0.0, step=100.0)
+        payment_method = st.selectbox("Payment Method", ["Cash", "UPI", "Card"])
+        submitted = st.form_submit_button("Add Payment")
 
-        if submit:
-            sid     = sale_options[selected_sale]
-            pending = float(next(s for s in sales if s["sale_id"] == sid)["pending_amount"])
-
-            if amount <= 0:
-                st.error("❌ Amount must be greater than 0.")
-            elif amount > pending:
-                st.error(f"❌ Amount ₹{amount:,.2f} exceeds pending balance ₹{pending:,.2f}.")
-            else:
-                result = add_payment(sid, payment_date, amount, method)
-                if result:
-                    st.success(f"✅ Payment recorded! ID: {result}")
-                    st.dataframe(to_df(get_payments_for_sale(sid)), use_container_width=True)
-                else:
-                    st.error("❌ Failed to record payment.")
+    if submitted:
+        if amount_paid > 0:
+            add_payment(chosen_sale_id, payment_date, amount_paid, payment_method)
+            st.success("Payment recorded successfully!")
+        else:
+            st.error("Please enter an amount greater than 0.")
 
 
 def page_view_sales(role, branch_id):
-    page_title("📋 Sales Records")
+    st.title("📋 View Sales")
 
-    if role == "Admin":
+    if role == "Super Admin":
+        sales = get_all_sales()
+    else:
         sales = get_sales_by_branch(branch_id)
-    else:
-        branches   = get_all_branches()
-        branch_map = {"All Branches": None}
-        branch_map.update({b["branch_name"]: b["branch_id"] for b in branches})
-        selected = st.selectbox("Filter by Branch", list(branch_map.keys()))
-        bid   = branch_map[selected]
-        sales = get_all_sales() if bid is None else get_sales_by_branch(bid)
 
-    df = to_df(sales)
-    if df.empty:
-        st.info("No sales records found.")
-    else:
-        st.dataframe(df, use_container_width=True, height=400)
-        st.caption(f"Total records: {len(df)}")
+    st.dataframe(to_df(sales), use_container_width=True)
 
 
 def page_pending(role, branch_id):
-    page_title("⏳ Pending Payments")
+    st.title("⏳ Pending Payments")
 
-    df = to_df(get_pending_sales(branch_id if role == "Admin" else None))
-    if df.empty:
-        st.success("🎉 No pending payments!")
+    if role == "Super Admin":
+        pending = get_pending_sales()
     else:
-        st.warning(f"⚠️ {len(df)} sales have pending amounts.")
-        st.dataframe(df[["sale_id", "name", "mobile_number",
-                          "gross_sales", "received_amount", "pending_amount", "status"]],
-                     use_container_width=True)
-        st.metric("Total Pending", f"₹{df['pending_amount'].sum():,.2f}")
+        pending = get_pending_sales(branch_id)
+
+    st.dataframe(to_df(pending), use_container_width=True)
 
 
 def page_reports():
-    page_title("📊 Reports & SQL Queries")
+    st.title("📊 Reports & SQL Queries")
 
-    queries = {
-        "Q9  — Sales Count Per Branch": """
-            SELECT b.branch_name, COUNT(cs.sale_id) AS total_sales
-            FROM customer_sales cs JOIN branches b ON cs.branch_id=b.branch_id
-            GROUP BY b.branch_name ORDER BY total_sales DESC""",
-        "Q13 — Branch-Wise Gross Sales": """
-            SELECT b.branch_name, SUM(cs.gross_sales) AS total_gross_sales
-            FROM customer_sales cs JOIN branches b ON cs.branch_id=b.branch_id
-            GROUP BY b.branch_name ORDER BY total_gross_sales DESC""",
-        "Q16 — Sales With Pending > 5000":
-            "SELECT sale_id,name,gross_sales,received_amount,pending_amount FROM customer_sales WHERE pending_amount>5000 ORDER BY pending_amount DESC",
-        "Q17 — Top 3 Highest Gross Sales":
-            "SELECT sale_id,name,product_name,gross_sales FROM customer_sales ORDER BY gross_sales DESC LIMIT 3",
-        "Q18 — Highest Grossing Branch": """
-            SELECT b.branch_name, SUM(cs.gross_sales) AS total
-            FROM customer_sales cs JOIN branches b ON cs.branch_id=b.branch_id
-            GROUP BY b.branch_name ORDER BY total DESC LIMIT 1""",
-        "Q19 — Monthly Sales Summary": """
-            SELECT YEAR(date) AS year, MONTHNAME(date) AS month,
-            COUNT(sale_id) AS num_sales, SUM(gross_sales) AS total_gross
-            FROM customer_sales GROUP BY YEAR(date),MONTH(date),MONTHNAME(date)
-            ORDER BY year,MONTH(date)""",
-        "Q20 — Payment Method Collection": """
-            SELECT payment_method, COUNT(*) AS num_transactions,
-            SUM(amount_paid) AS total_collected FROM payment_splits
-            GROUP BY payment_method ORDER BY total_collected DESC""",
-    }
-
-    choice = st.selectbox("Choose a query to run", list(queries.keys()))
-    if st.button("▶ Run Query"):
-        rows = run_query(queries[choice])
-        if rows:
-            st.dataframe(to_df(rows), use_container_width=True)
-        else:
-            st.info("No data returned.")
-
-    st.divider()
-    st.subheader("📈 Monthly Sales Trend")
+    st.subheader("Monthly Sales Trend")
     trend = get_monthly_sales_trend()
     if trend:
-        df = pd.DataFrame(trend)
-        df["period"] = df["year"].astype(str) + "-" + df["month"].astype(str).str.zfill(2)
+        df = to_df(trend)
+        # Build a readable "2024-01" style label for the chart
+        df["month_label"] = df["year"].astype(str) + "-" + df["month"].astype(str).str.zfill(2)
         df["total_gross_sales"] = pd.to_numeric(df["total_gross_sales"], errors="coerce")
-        st.line_chart(df.set_index("period")["total_gross_sales"])
+        st.bar_chart(df.set_index("month_label")["total_gross_sales"])
+    else:
+        st.info("No sales data yet.")
+
+    st.subheader("All Payments")
+    payments = get_all_payments()
+    st.dataframe(to_df(payments), use_container_width=True)
 
 
 def page_delete():
-    page_title("🗑️ Delete Records")
-    st.warning("⚠️ Deletions are permanent and cannot be undone.")
+    st.title("🗑️ Delete Records")
+    st.warning("This permanently deletes data. Use with care.")
 
-    tab1, tab2 = st.tabs(["🧾 Delete a Sale", "💸 Delete a Payment"])
+    tab_sales, tab_payments = st.tabs(["Delete a Sale", "Delete a Payment"])
 
-    with tab1:
+    with tab_sales:
         sales = get_all_sales()
-        if not sales:
-            st.info("No sales found.")
+        sale_labels = []
+        label_to_sale_id = {}
+        for s in sales:
+            label = f"Sale #{s['sale_id']} - {s['name']} (₹{s['gross_sales']})"
+            sale_labels.append(label)
+            label_to_sale_id[label] = s["sale_id"]
+
+        if sale_labels:
+            chosen_label = st.selectbox("Select a sale to delete", sale_labels)
+            if st.button("Delete Sale"):
+                delete_sale(label_to_sale_id[chosen_label])
+                st.success("Sale deleted.")
+                st.rerun()
         else:
-            sale_options = {f"#{s['sale_id']} — {s['name']} (₹{s['gross_sales']})": s["sale_id"] for s in sales}
-            sid      = sale_options[st.selectbox("Select Sale to Delete", list(sale_options.keys()), key="del_sale")]
-            payments = get_payments_for_sale(sid)
+            st.info("No sales to delete.")
 
-            if payments:
-                st.info(f"ℹ️ This sale has {len(payments)} linked payment(s) that will also be deleted.")
-                st.dataframe(to_df(payments), use_container_width=True)
+    with tab_payments:
+        payments = get_all_payments()
+        payment_labels = []
+        label_to_payment_id = {}
+        for p in payments:
+            label = f"Payment #{p['payment_id']} - {p['customer_name']} (₹{p['amount_paid']})"
+            payment_labels.append(label)
+            label_to_payment_id[label] = p["payment_id"]
 
-            if st.checkbox("I understand this will permanently delete the sale and all its payments.", key="confirm_sale"):
-                if st.button("🗑️ Delete Sale"):
-                    if payments:
-                        run_query("DELETE FROM payment_splits WHERE sale_id = %s", (sid,), fetch=False)
-                    result = run_query("DELETE FROM customer_sales WHERE sale_id = %s", (sid,), fetch=False)
-                    if result is not None:
-                        st.success(f"✅ Sale #{sid} deleted.")
-                        st.rerun()
-                    else:
-                        st.error("❌ Failed to delete sale.")
-
-    with tab2:
-        all_payments = get_all_payments()
-        if not all_payments:
-            st.info("No payments found.")
+        if payment_labels:
+            chosen_label = st.selectbox("Select a payment to delete", payment_labels)
+            if st.button("Delete Payment"):
+                delete_payment(label_to_payment_id[chosen_label])
+                st.success("Payment deleted.")
+                st.rerun()
         else:
-            pay_options = {
-                f"#{p['payment_id']} — Sale #{p['sale_id']} | ₹{p['amount_paid']} via {p['payment_method']} on {p['payment_date']}": p["payment_id"]
-                for p in all_payments
-            }
-            pid = pay_options[st.selectbox("Select Payment to Delete", list(pay_options.keys()), key="del_payment")]
-
-            if st.checkbox("I understand this will permanently delete this payment.", key="confirm_payment"):
-                if st.button("🗑️ Delete Payment"):
-                    result = run_query("DELETE FROM payment_splits WHERE payment_id = %s", (pid,), fetch=False)
-                    if result is not None:
-                        st.success(f"✅ Payment #{pid} deleted.")
-                        st.rerun()
-                    else:
-                        st.error("❌ Failed to delete payment.")
+            st.info("No payments to delete.")
 
 
 # ── Dashboard shell ───────────────────────────────────────────
@@ -323,13 +280,20 @@ def show_dashboard():
 
     page = st.sidebar.radio("Navigate to", pages)
 
-    if   page == "🏠 Dashboard":             page_dashboard(role, branch_id)
-    elif page == "➕ Add Sale":               page_add_sale(role, branch_id)
-    elif page == "💳 Add Payment":            page_add_payment(role, branch_id)
-    elif page == "📋 View Sales":             page_view_sales(role, branch_id)
-    elif page == "⏳ Pending Payments":       page_pending(role, branch_id)
-    elif page == "📊 Reports & SQL Queries":  page_reports()
-    elif page == "🗑️ Delete Records":         page_delete()
+    if page == "🏠 Dashboard":
+        page_dashboard(role, branch_id)
+    elif page == "➕ Add Sale":
+        page_add_sale(role, branch_id)
+    elif page == "💳 Add Payment":
+        page_add_payment(role, branch_id)
+    elif page == "📋 View Sales":
+        page_view_sales(role, branch_id)
+    elif page == "⏳ Pending Payments":
+        page_pending(role, branch_id)
+    elif page == "📊 Reports & SQL Queries":
+        page_reports()
+    elif page == "🗑️ Delete Records":
+        page_delete()
 
 
 # ── Entry point ───────────────────────────────────────────────
