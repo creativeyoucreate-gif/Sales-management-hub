@@ -13,6 +13,7 @@ from crud_operations import (
     get_branch_wise_sales, get_payment_method_summary,
     get_monthly_sales_trend, delete_sale, delete_payment
 )
+from sql_queries import QUERIES, run_sql_query
 
 st.set_page_config(page_title="Sales Intelligence Hub", page_icon="📊", layout="wide")
 
@@ -197,6 +198,7 @@ def page_pending(role, branch_id):
 def page_reports():
     st.title("📊 Reports & SQL Queries")
 
+    # ── Charts / tables ──────────────────────────────────────
     st.subheader("Monthly Sales Trend")
     trend = get_monthly_sales_trend()
     if trend:
@@ -211,6 +213,46 @@ def page_reports():
     st.subheader("All Payments")
     payments = get_all_payments()
     st.dataframe(to_df(payments), use_container_width=True)
+
+    # ── SQL Query Explorer (the 20 assignment questions) ─────
+    st.divider()
+    st.subheader("🧮 SQL Query Explorer")
+    st.caption("Pick any of the 20 assignment questions to see its SQL and run it.")
+
+    sections = ["All"]
+    for q in QUERIES:
+        if q["section"] not in sections:
+            sections.append(q["section"])
+
+    chosen_section = st.radio("Section", sections, horizontal=True)
+
+    if chosen_section == "All":
+        visible = QUERIES
+    else:
+        visible = [q for q in QUERIES if q["section"] == chosen_section]
+
+    labels = []
+    label_to_no = {}
+    for q in visible:
+        label = f"Q{q['no']}. {q['title']}"
+        labels.append(label)
+        label_to_no[label] = q["no"]
+
+    chosen_label = st.selectbox("Question", labels)
+    chosen_no = label_to_no[chosen_label]
+    chosen_query = [q for q in QUERIES if q["no"] == chosen_no][0]
+
+    st.code(chosen_query["sql"], language="sql")
+
+    if st.button("▶ Run Query"):
+        rows = run_sql_query(chosen_no)
+        if rows is None:
+            st.error("The query failed. Check the terminal for the error message.")
+        elif len(rows) == 0:
+            st.info("The query ran successfully but returned no rows.")
+        else:
+            st.success(f"{len(rows)} row(s) returned.")
+            st.dataframe(to_df(rows), use_container_width=True)
 
 
 def page_delete():
