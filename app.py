@@ -136,28 +136,70 @@ def page_add_sale(role, branch_id):
             st.error("Please fill in all fields.")
 
 
+# def page_add_payment(role, branch_id):
+#     st.title("💳 Add Payment")
+
+#     if role == "Super Admin":
+#         sales = get_all_sales()
+#     else:
+#         sales = get_sales_by_branch(branch_id)
+
+#     if not sales:
+#         st.info("No sales found yet.")
+#         return
+
+#     # Build a simple list of sale choices for the dropdown
+#     sale_labels = []
+#     label_to_sale_id = {}
+#     for s in sales:
+#         label = f"Sale #{s['sale_id']} - {s['name']} (Pending: ₹{s['pending_amount']})"
+#         sale_labels.append(label)
+#         label_to_sale_id[label] = s["sale_id"]
+
+#     chosen_label = st.selectbox("Select Sale", sale_labels)
+#     chosen_sale_id = label_to_sale_id[chosen_label]
+
+#     with st.form("add_payment_form"):
+#         payment_date = st.date_input("Payment Date", value=date.today())
+#         amount_paid = st.number_input("Amount Paid (₹)", min_value=0.0, step=100.0)
+#         payment_method = st.selectbox("Payment Method", ["Cash", "UPI", "Card"])
+#         submitted = st.form_submit_button("Add Payment")
+
+#     if submitted:
+#         if amount_paid > 0:
+#             add_payment(chosen_sale_id, payment_date, amount_paid, payment_method)
+#             st.success("Payment recorded successfully!")
+#         else:
+#             st.error("Please enter an amount greater than 0.")
+
 def page_add_payment(role, branch_id):
     st.title("💳 Add Payment")
+
+    # Show the success message that was saved before the page refreshed
+    if "payment_msg" in st.session_state:
+        st.success(st.session_state.pop("payment_msg"))
 
     if role == "Super Admin":
         sales = get_all_sales()
     else:
         sales = get_sales_by_branch(branch_id)
 
+    # Keep only sales that still have money pending, oldest first
+    sales = [s for s in sales if float(s["pending_amount"]) > 0]
+    sales.sort(key=lambda s: s["sale_id"])
+
     if not sales:
-        st.info("No sales found yet.")
+        st.info("🎉 All sales are fully paid. Nothing is pending.")
         return
 
-    # Build a simple list of sale choices for the dropdown
-    sale_labels = []
-    label_to_sale_id = {}
-    for s in sales:
-        label = f"Sale #{s['sale_id']} - {s['name']} (Pending: ₹{s['pending_amount']})"
-        sale_labels.append(label)
-        label_to_sale_id[label] = s["sale_id"]
-
-    chosen_label = st.selectbox("Select Sale", sale_labels)
-    chosen_sale_id = label_to_sale_id[chosen_label]
+    sale_by_id = {s["sale_id"]: s for s in sales}
+    chosen_id = st.selectbox(
+        "Select Sale",
+        list(sale_by_id.keys()),
+        format_func=lambda i: f"Sale #{i} - {sale_by_id[i]['name']} "
+                              f"(Pending: ₹{sale_by_id[i]['pending_amount']})",
+    )
+    pending = float(sale_by_id[chosen_id]["pending_amount"])
 
     with st.form("add_payment_form"):
         payment_date = st.date_input("Payment Date", value=date.today())
@@ -166,11 +208,14 @@ def page_add_payment(role, branch_id):
         submitted = st.form_submit_button("Add Payment")
 
     if submitted:
-        if amount_paid > 0:
-            add_payment(chosen_sale_id, payment_date, amount_paid, payment_method)
-            st.success("Payment recorded successfully!")
-        else:
+        if amount_paid <= 0:
             st.error("Please enter an amount greater than 0.")
+        elif amount_paid > pending:
+            st.error(f"Amount can't be more than the pending ₹{pending:,.2f}.")
+        else:
+            add_payment(chosen_id, payment_date, amount_paid, payment_method)
+            st.session_state["payment_msg"] = "Payment recorded successfully!"
+            st.rerun()
 
 
 def page_view_sales(role, branch_id):
