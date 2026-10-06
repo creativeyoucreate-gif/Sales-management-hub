@@ -224,3 +224,12 @@ SELECT
   (SELECT SUM(received_amount) FROM customer_sales) AS total_received,
   (SELECT COUNT(*) FROM customer_sales WHERE status = 'Close') AS closed_sales;
 
+ALTER TABLE customer_sales
+DROP CONSTRAINT IF EXISTS customer_sales_mobile_number_key;
+
+DROP VIEW IF EXISTS customer_sales_numbered;
+
+
+
+
+
