@@ -1,25 +1,6 @@
 -- ============================================================
 --  SALES INTELLIGENCE HUB - PostgreSQL Database Schema
 -- ============================================================
---  How to use this file:
---
---  1. Create an empty database first (PostgreSQL can't create
---     a database and use it in the same script, unlike MySQL):
---
---         createdb -U postgres project1
---
---  2. Then load this whole file into that database:
---
---         psql -U postgres -d project1 -f sqlsc.sql
---
---  This script is SAFE TO RUN AGAIN AND AGAIN. Every time you run
---  it, it first deletes the four tables (if they exist) and then
---  rebuilds them from scratch with fresh sample data. That way you
---  never end up with old, empty, or half-loaded tables sitting
---  around from an earlier attempt.
--- ============================================================
-
-
 -- ============================================================
 -- STEP 0: Start clean
 -- Remove any old version of these tables first.
@@ -57,7 +38,7 @@ CREATE TABLE users (
 
 
 -- ============================================================
--- TABLE 3: customer_sales
+-- TABLE 3: customer_salesB
 -- pending_amount is a generated column: PostgreSQL calculates
 -- and stores it automatically as (gross_sales - received_amount).
 -- You never insert or update it yourself.
@@ -212,3 +193,34 @@ UNION ALL
 SELECT 'customer_sales', COUNT(*) FROM customer_sales
 UNION ALL
 SELECT 'payment_splits', COUNT(*) FROM payment_splits;
+
+SELECT * FROM branches ORDER BY branch_id;
+
+INSERT INTO branches (branch_name, branch_admin_name) VALUES
+('Pune', 'Ramesh'),
+('Kolkata', 'Sita'),
+('Jaipur', 'Mohan'),
+('Coimbatore', 'Lakshmi');
+
+
+SELECT * FROM CUSTOMER_SALES;
+
+SELECT setval(pg_get_serial_sequence('customer_sales', 'sale_id'),
+(SELECT MAX(sale_id) FROM customer_sales));
+
+SELECT COUNT(*) AS rows_loaded, SUM(gross_sales) AS total_gross, SUM(pending_amount) AS total_pending
+FROM customer_sales;
+
+SELECT COUNT(*) FROM customer_sales;
+
+TRUNCATE payment_splits RESTART IDENTITY;
+
+SELECT setval(pg_get_serial_sequence('payment_splits', 'payment_id'),
+(SELECT MAX(payment_id) FROM payment_splits));
+
+SELECT
+  (SELECT COUNT(*) FROM payment_splits)       AS payments,
+  (SELECT SUM(amount_paid) FROM payment_splits) AS total_paid,
+  (SELECT SUM(received_amount) FROM customer_sales) AS total_received,
+  (SELECT COUNT(*) FROM customer_sales WHERE status = 'Close') AS closed_sales;
+
